@@ -1,6 +1,10 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { digitalReadinessAgent } from "../agents/digital-readiness-agent";
+import { analyzeMetricsTool } from "../tools/analyzeMetrics";
+import { generateQuestionsTool } from "../tools/generateQuestions";
+import { evaluateResponseTool } from "../tools/evaluateResponse";
+import { computeScoreTool } from "../tools/computeScore";
 import {
   type MetricsPayload,
   type BehavioralProfile,
@@ -41,7 +45,18 @@ const taskProfileSchema = z.object({
 const behavioralProfileSchema = z.object({
   tasks: z.array(taskProfileSchema),
   behavioralScore: z.number(),
-  dominantWeaknesses: z.array(z.string()),
+  dominantWeaknesses: z.array(
+    z.enum([
+      "app_opening",
+      "messaging",
+      "internet_search",
+      "form_filling",
+      "settings_navigation",
+      "app_download",
+      "online_safety",
+      "digital_payments",
+    ]),
+  ),
   difficultyTier: z.enum(["low", "medium", "high"]),
   ageContext: z.enum(["child", "adult", "unknown"]),
   childMode: z.boolean(),
@@ -51,8 +66,17 @@ const behavioralProfileSchema = z.object({
 
 const situationalQuestionSchema = z.object({
   id: z.string(),
-  domain: z.string(),
-  difficulty: z.string(),
+  domain: z.enum([
+    "app_opening",
+    "messaging",
+    "internet_search",
+    "form_filling",
+    "settings_navigation",
+    "app_download",
+    "online_safety",
+    "digital_payments",
+  ]),
+  difficulty: z.enum(["low", "medium", "high"]),
   question: z.string(),
   expectedReasoning: z.string(),
   acceptableKeywords: z.array(z.string()),
@@ -144,6 +168,11 @@ const enrichContextStep = createStep({
   description:
     "Extracts age context and enriches the payload with session metadata.",
 
+  inputSchema: z.object({
+    allMetrics: z.array(rawTaskMetricSchema),
+    languageInUse: z.enum(["en", "ha", "ig", "yo"]),
+    assessmentStartTime: z.number(),
+  }),
   outputSchema: z.object({
     allMetrics: z.array(rawTaskMetricSchema),
     languageInUse: z.enum(["en", "ha", "ig", "yo"]),
@@ -152,10 +181,8 @@ const enrichContextStep = createStep({
     sessionLabel: z.string(),
   }),
 
-  execute: async ({ context }) => {
-    const prev = context.getStepResult("validate-payload");
-
-    const { allMetrics, languageInUse, assessmentStartTime } = prev;
+  execute: async ({ inputData }) => {
+    const { allMetrics, languageInUse, assessmentStartTime } = inputData;
 
     // Extract age from Form Completion task if present
     const formTask = allMetrics.find(
@@ -198,18 +225,25 @@ const analyzeMetricsStep = createStep({
   id: "analyze-metrics",
   description:
     "Runs the analyzeMetrics tool to produce a BehavioralProfile from raw task data.",
+  inputSchema: z.object({
+    allMetrics: z.array(rawTaskMetricSchema),
+    languageInUse: z.enum(["en", "ha", "ig", "yo"]),
+  }),
 
   outputSchema: z.object({
     behavioralProfile: behavioralProfileSchema,
   }),
 
-  execute: async ({ context }) => {
-    const prev = context.getStepResult("enrich-context");
-    const { allMetrics, languageInUse } = prev;
+  execute: async ({ inputData }) => {
+    const { allMetrics, languageInUse } = inputData;
 
-    const result = await digitalReadinessAgent.tools.analyzeMetrics.execute({
-      context: { allMetrics, languageInUse },
-    });
+    const result = await analyzeMetricsTool.execute!(
+      {
+        allMetrics,
+        languageInUse,
+      },
+      {},
+    );
 
     console.info(
       `[analyze-metrics] BehavioralScore: ${result.behavioralScore} | ` +
@@ -235,15 +269,18 @@ const calibrateDifficultyStep = createStep({
   description:
     "Applies override rules to difficulty and selects the final question count.",
 
+  inputSchema: z.object({
+    behavioralProfile: behavioralProfileSchema,
+  }),
+
   outputSchema: z.object({
     behavioralProfile: behavioralProfileSchema,
     questionCount: z.number(),
     difficultyOverrideApplied: z.boolean(),
   }),
 
-  execute: async ({ context }) => {
-    const { behavioralProfile } = context.getStepResult("analyze-metrics");
-
+  execute: async ({ inputData }) => {
+    const { behavioralProfile } = inputData;
     let finalDifficulty = behavioralProfile.difficultyTier;
     let difficultyOverrideApplied = false;
 
@@ -296,23 +333,26 @@ const generateQuestionsStep = createStep({
   description:
     "Generates adaptive situational questions using the LLM via the generateQuestions tool.",
 
+  inputSchema: z.object({
+    behavioralProfile: behavioralProfileSchema,
+    questionCount: z.number(),
+  }),
+
   outputSchema: z.object({
     questions: z.array(situationalQuestionSchema),
     questionCount: z.number(),
   }),
 
-  execute: async ({ context }) => {
-    const { behavioralProfile, questionCount } = context.getStepResult(
-      "calibrate-difficulty",
-    );
+  execute: async ({ inputData }) => {
+    const { behavioralProfile, questionCount } = inputData;
 
-    const questions =
-      await digitalReadinessAgent.tools.generateQuestions.execute({
-        context: {
-          behavioralProfile,
-          questionCount,
-        },
-      });
+    const questions = await generateQuestionsTool.execute!(
+      {
+        behavioralProfile,
+        questionCount,
+      },
+      {},
+    );
 
     console.info(
       `[generate-questions] Generated ${questions.length} questions | ` +
@@ -345,6 +385,11 @@ const collectAnswersStep = createStep({
     "Suspends the workflow and emits questions to the mobile app. " +
     "Resumes when the app delivers user answers via workflow.resume().",
 
+  inputSchema: z.object({
+    questions: z.array(situationalQuestionSchema),
+    questionCount: z.number(),
+  }),
+
   outputSchema: z.object({
     questions: z.array(situationalQuestionSchema),
     userAnswers: z.array(userAnswerSchema),
@@ -357,24 +402,19 @@ const collectAnswersStep = createStep({
       .min(1, "At least one answer is required to resume"),
   }),
 
-  execute: async ({ context, suspend }) => {
-    const { questions } = context.getStepResult("generate-questions");
+  execute: async ({ inputData, suspend, resumeData }) => {
+    const { questions } = inputData;
 
-    // Check if this step is resuming (answers already provided) or running fresh
-    const resumeData = context.getResumeData();
-
-    if (!resumeData) {
-      // ── First execution: suspend and hand questions back to the caller ──
+    if (!resumeData?.answers) {
+      // ── First execution: suspend ──
       console.info(
         `[collect-answers] Suspending. Delivering ${questions.length} questions to caller.`,
       );
 
-      // suspend() pauses the workflow and surfaces the payload to the caller.
-      // The workflow instance ID should be used by the mobile app to resume.
       await suspend({
         questions: questions.map((q: SituationalQuestion) => ({
           id: q.id,
-          question: q.question, // Only expose the question text, not expectedReasoning
+          question: q.question,
           domain: q.domain,
           difficulty: q.difficulty,
         })),
@@ -382,22 +422,19 @@ const collectAnswersStep = createStep({
           "Please answer all questions and call resume() with your answers.",
       });
 
-      // This line is never reached on first execution (suspend exits the step).
-      // TypeScript requires a return — it will be discarded.
       return { questions, userAnswers: [] };
     }
 
     // ── Resumed: validate and align answers with questions ──────────────────
     const { answers } = resumeData;
 
-    // Ensure every question has at least an empty answer (prevents missing IDs downstream)
     const alignedAnswers = questions.map((q: SituationalQuestion) => {
       const provided = answers.find(
         (a: { questionId: string; answer: string }) => a.questionId === q.id,
       );
       return {
         questionId: q.id,
-        answer: provided?.answer ?? "", // Empty string if user skipped
+        answer: provided?.answer ?? "",
       };
     });
 
@@ -425,15 +462,20 @@ const evaluateResponsesStep = createStep({
   description:
     "Evaluates each user answer against its question using the LLM. Called once per question.",
 
+  inputSchema: z.object({
+    questions: z.array(situationalQuestionSchema),
+    userAnswers: z.array(userAnswerSchema),
+  }),
+
   outputSchema: z.object({
     evaluatedResponses: z.array(evaluatedResponseSchema),
     knowledgeScore: z.number(),
   }),
 
-  execute: async ({ context }) => {
-    const { questions, userAnswers } = context.getStepResult("collect-answers");
+  execute: async ({ inputData, getStepResult }) => {
+    const { questions, userAnswers } = inputData;
 
-    const { behavioralProfile } = context.getStepResult("calibrate-difficulty");
+    const behavioralProfile = getStepResult(calibrateDifficultyStep);
 
     const evaluatedResponses: EvaluatedResponse[] = [];
 
@@ -445,19 +487,18 @@ const evaluateResponsesStep = createStep({
       );
       const userAnswer = userAnswerEntry?.answer ?? "";
 
-      const result = await digitalReadinessAgent.tools.evaluateResponse.execute(
+      const result = await evaluateResponseTool.execute!(
         {
-          context: {
-            questionId: question.id,
-            question: question.question,
-            expectedReasoning: question.expectedReasoning,
-            acceptableKeywords: question.acceptableKeywords,
-            userAnswer,
-            language: behavioralProfile.language as SupportedLanguage,
-            childMode: behavioralProfile.childMode,
-            supportMode: behavioralProfile.supportMode,
-          },
+          questionId: question.id,
+          question: question.question,
+          expectedReasoning: question.expectedReasoning,
+          acceptableKeywords: question.acceptableKeywords,
+          userAnswer,
+          language: behavioralProfile.language as SupportedLanguage,
+          childMode: behavioralProfile.childMode,
+          supportMode: behavioralProfile.supportMode,
         },
+        {},
       );
 
       console.info(
@@ -486,7 +527,7 @@ const evaluateResponsesStep = createStep({
 // STEP 8 — compute-score
 //
 // Applies the 50/50 weighting formula, classifies the readiness level,
-// and uses the LLM to generate the personalised narrative report
+// and uses the LLM to generate the personalized narrative report
 // (reasoning, strengths, weaknesses, recommendations) in the user's language.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -494,6 +535,11 @@ const computeScoreStep = createStep({
   id: "compute-score",
   description:
     "Computes the final score, classifies readiness level, and generates the narrative report.",
+
+  inputSchema: z.object({
+    evaluatedResponses: z.array(evaluatedResponseSchema),
+    knowledgeScore: z.number(),
+  }),
 
   outputSchema: z.object({
     result: z.object({
@@ -516,23 +562,27 @@ const computeScoreStep = createStep({
     }),
   }),
 
-  execute: async ({ context }) => {
-    const { behavioralProfile } = context.getStepResult("calibrate-difficulty");
+  execute: async ({ inputData, getStepResult }) => {
+    const { knowledgeScore } = inputData;
 
-    const { evaluatedResponses } = context.getStepResult("evaluate-responses");
+    const { behavioralProfile } = getStepResult(calibrateDifficultyStep);
 
-    const { questions } = context.getStepResult("collect-answers");
+    const { evaluatedResponses } = getStepResult(evaluateResponsesStep);
 
-    const { assessmentStartTime } = context.getStepResult("enrich-context");
+    const { questions } = getStepResult(collectAnswersStep);
 
-    const result = await digitalReadinessAgent.tools.computeScore.execute({
-      context: {
+    const { assessmentStartTime } = getStepResult(enrichContextStep);
+
+    const result = await computeScoreTool.execute!(
+      {
         behavioralProfile,
         evaluatedResponses,
         generatedQuestions: questions,
         assessmentStartTime,
+        knowledgeScore,
       },
-    });
+      {},
+    );
 
     console.info(
       `[compute-score] FinalScore: ${result.readinessScore}/100 | ` +
@@ -588,18 +638,22 @@ const formatOutputStep = createStep({
     sessionLabel: z.string(),
   }),
 
-  execute: async ({ context }) => {
-    const { result } = context.getStepResult("compute-score");
-    const { sessionLabel } = context.getStepResult("enrich-context");
+  execute: async ({ getStepResult }) => {
+    const { result } = getStepResult(computeScoreStep);
+    const { sessionLabel } = getStepResult(enrichContextStep);
 
     // Strip internal-only fields from questions before returning to mobile app
-    const publicQuestions = result.generatedQuestions.map(
-      (q: SituationalQuestion & { userAnswer: string; score: number }) => ({
+    const generatedQuestions = Array.isArray(result.generatedQuestions)
+      ? result.generatedQuestions
+      : [];
+
+    const publicQuestions = generatedQuestions.map(
+      (q: SituationalQuestion & { userAnswer?: string; score?: number }) => ({
         id: q.id,
         domain: q.domain,
         question: q.question,
-        userAnswer: q.userAnswer,
-        score: q.score,
+        userAnswer: q.userAnswer ?? "",
+        score: typeof q.score === "number" ? q.score : 0,
         // expectedReasoning and acceptableKeywords are intentionally omitted
       }),
     );
@@ -656,6 +710,7 @@ export const digitalReadinessWorkflow = createWorkflow({
         }),
       ),
     }),
+    sessionLabel: z.string(),
   }),
 })
   .then(validatePayloadStep)
