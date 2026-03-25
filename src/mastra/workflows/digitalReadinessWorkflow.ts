@@ -686,6 +686,8 @@ const formatOutputStep = createStep({
 
 export const digitalReadinessWorkflow = createWorkflow({
   id: "digital-readiness-workflow",
+  description:
+    "Runs the full digital readiness assessment pipeline: validatePayloadStep -> enrichContextStep -> analyzeMetricsStep -> calibrateDifficultyStep -> generateQuestionsStep -> collectAnswersStep -> evaluateResponsesStep -> computeScoreStep -> formatOutputStep",
   inputSchema: z.object({
     allMetrics: z.array(rawTaskMetricSchema).min(1),
     languageInUse: z.enum(["en", "ha", "ig", "yo"]).default("en"),
