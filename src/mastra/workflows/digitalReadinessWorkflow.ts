@@ -298,14 +298,14 @@ const calibrateDifficultyStep = createStep({
       console.info("[calibrate-difficulty] Support mode override: → low");
     }
 
-    // Question count: 3 for low difficulty (keep it short for struggling users),
-    // 4 for medium, 5 for high
+    // Question count: 10 for low difficulty (keep it short for struggling users),
+    // 15 for medium, 20 for high
     const questionCountMap: Record<string, number> = {
-      low: 3,
-      medium: 4,
-      high: 5,
+      low: 10,
+      medium: 15,
+      high: 20,
     };
-    const questionCount = questionCountMap[finalDifficulty] ?? 4;
+    const questionCount = questionCountMap[finalDifficulty] ?? 15;
 
     const calibratedProfile: BehavioralProfile = {
       ...behavioralProfile,

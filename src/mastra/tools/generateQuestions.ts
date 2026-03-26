@@ -26,7 +26,7 @@ const inputSchema = z.object({
     supportMode: z.boolean(),
     language: z.enum(["en", "ha", "ig", "yo"]),
   }),
-  questionCount: z.number().min(3).max(5).default(4),
+  questionCount: z.number().min(10).max(20).default(15),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ Schema for each item:
 export const generateQuestionsTool = createTool({
   id: "generateQuestions",
   description:
-    "Uses the LLM to generate 3–5 adaptive situational questions based on the user's BehavioralProfile. " +
+    "Uses the LLM to generate 10-20 adaptive situational questions based on the user's BehavioralProfile. " +
     "Questions are contextual, practical, culturally neutral, and rendered in the user's language. " +
     "Child mode and support mode constraints are enforced automatically. " +
     "Returns a typed SituationalQuestion array.",
