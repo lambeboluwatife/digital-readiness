@@ -29,8 +29,9 @@ const situationalQuestionSchema = z.object({
   domain: z.string(),
   difficulty: z.string(),
   question: z.string(),
+  options: z.array(z.string()),
+  correctAnswerIndex: z.number(),
   expectedReasoning: z.string(),
-  acceptableKeywords: z.array(z.string()),
 });
 
 const taskProfileSchema = z.object({

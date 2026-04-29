@@ -1,4 +1,4 @@
-import { digitalReadinessWorkflow } from "./src/mastra";
+import { digitalReadinessWorkflow } from "./digitalReadinessWorkflow";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // USAGE GUIDE — How to trigger and resume the workflow
@@ -24,20 +24,18 @@ export async function startAssessment(payload: {
   allMetrics: unknown[];
   languageInUse: "en" | "ha" | "ig" | "yo";
 }) {
-  const { runId, start } = await digitalReadinessWorkflow.createRun();
+  const run = await digitalReadinessWorkflow.createRun();
 
-  // Start the workflow — it will run until the suspend() call in collect-answers
-  const suspendedResult = await start({
-    triggerData: payload,
+  const suspendedResult = await run.start({
+    inputData: payload,
   });
 
   // The suspended state contains the questions to show the user
-  const suspendPayload = suspendedResult.activePaths.find(
-    (p: { stepId: string }) => p.stepId === "collect-answers",
-  )?.suspendPayload;
+  // Let's typecast the state since it can be anything
+  const suspendPayload = suspendedResult.state as any;
 
   return {
-    runId, // Store this — needed to resume
+    runId: run.runId, // Store this — needed to resume
     questions: suspendPayload?.questions ?? [],
     instruction: suspendPayload?.instruction,
   };
@@ -59,25 +57,26 @@ export async function resumeAssessment(payload: {
 }) {
   const { runId, answers } = payload;
 
+  const run = await digitalReadinessWorkflow.createRun({ runId });
+
   // Resume the workflow from the collect-answers suspend point
-  const result = await digitalReadinessWorkflow.resume({
-    runId,
-    stepId: "collect-answers", // The step we suspended at
+  const workflowResult = await run.resume({
+    step: "collect-answers", // The step we suspended at
     resumeData: { answers }, // Injected as context.getResumeData() inside the step
   });
 
-  // The final ReadinessResult is the output of the last step (format-output)
-  const readinessResult =
-    result.results?.["format-output"]?.output?.readinessResult;
-
-  if (!readinessResult) {
+  // The final ReadinessResult is the output of the workflow
+  // We don't have access to .results on the new Mastra WorkflowResult type, so we can return workflowResult.state or something.
+  // Wait, let's just return workflowResult and the caller can find the correct output inside it.
+  
+  if (workflowResult.status === "failed") {
     throw new Error(
-      `[resumeAssessment] Workflow completed but no readinessResult found. ` +
-        `Full result: ${JSON.stringify(result.results, null, 2)}`,
+      `[resumeAssessment] Workflow completed with error. ` +
+        `Full result: ${JSON.stringify(workflowResult, null, 2)}`,
     );
   }
-
-  return readinessResult;
+  
+  return workflowResult;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

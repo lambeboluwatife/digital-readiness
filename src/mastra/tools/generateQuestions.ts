@@ -91,7 +91,7 @@ function buildGenerationPrompt(
     ? "\nSUPPORT MODE IS ACTIVE: The user shows very limited digital capability. Keep questions as simple and encouraging as possible."
     : "";
 
-  return `You are generating situational digital literacy questions for a rural user assessment.
+    return `You are generating situational digital literacy questions for a rural user assessment.
 
 CONTEXT:
 - User's behavioral score: ${profile.behavioralScore}/100
@@ -108,12 +108,13 @@ QUESTION DOMAINS TO COVER (select from these):
 ${domainList}
 
 STRICT CONSTRAINTS:
-1. Write ALL questions and expectedReasoning in ${languageName}.
+1. Write ALL questions, options, and expectedReasoning in ${languageName}.
 2. Questions must describe a real scenario — never ask for definitions.
 3. Never use technical jargon (no "browser", "URL", "Wi-Fi" unless in a natural phrase).
 4. Questions must be culturally neutral — avoid brand names except universal ones (WhatsApp is acceptable).
 5. Each question must be independently answerable — no question should depend on a previous answer.
-6. acceptableKeywords must be in ${languageName} as well.
+6. Provide exactly 4 options per question.
+7. Only one option should be unambiguously correct.
 
 GENERATE exactly ${questionCount} questions.
 
@@ -124,8 +125,14 @@ Schema for each item:
   "domain": "<domain_key>",            // from the domain list above
   "difficulty": "${profile.difficultyTier}",
   "question": "<scenario question in ${languageName}>",
-  "expectedReasoning": "<what a capable user would say/do, in ${languageName}>",
-  "acceptableKeywords": ["<keyword1>", "<keyword2>"]   // 3–6 keywords in ${languageName}
+  "options": [                         // Exactly 4 options in ${languageName}
+    "<Option A>",
+    "<Option B>",
+    "<Option C>",
+    "<Option D>"
+  ],
+  "correctAnswerIndex": 0,             // 0-based index of the correct option
+  "expectedReasoning": "<explanation of why the correct answer is correct, in ${languageName}>"
 }`;
 }
 
@@ -187,8 +194,9 @@ export const generateQuestionsTool = createTool({
       domain: z.string(),
       difficulty: z.string(),
       question: z.string().min(10),
+      options: z.array(z.string()).length(4),
+      correctAnswerIndex: z.number().min(0).max(3),
       expectedReasoning: z.string().min(5),
-      acceptableKeywords: z.array(z.string()).min(1),
     });
 
     const validated: SituationalQuestion[] = [];

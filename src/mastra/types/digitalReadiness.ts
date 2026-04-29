@@ -85,8 +85,9 @@ export interface SituationalQuestion {
   domain: QuestionDomain;
   difficulty: DifficultyTier;
   question: string; // In target language
-  expectedReasoning: string; // Internal — not shown to user
-  acceptableKeywords: string[]; // Internal — used by evaluateResponse
+  options: string[]; // Selectable options in target language
+  correctAnswerIndex: number; // 0-based index of the correct option
+  expectedReasoning: string; // Internal — not shown to user, explains why the correct answer is right
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
