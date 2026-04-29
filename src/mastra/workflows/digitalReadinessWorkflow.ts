@@ -78,8 +78,9 @@ const situationalQuestionSchema = z.object({
   ]),
   difficulty: z.enum(["low", "medium", "high"]),
   question: z.string(),
+  options: z.array(z.string()),
+  correctAnswerIndex: z.number(),
   expectedReasoning: z.string(),
-  acceptableKeywords: z.array(z.string()),
 });
 
 const userAnswerSchema = z.object({
@@ -417,6 +418,7 @@ const collectAnswersStep = createStep({
           question: q.question,
           domain: q.domain,
           difficulty: q.difficulty,
+          options: q.options,
         })),
         instruction:
           "Please answer all questions and call resume() with your answers.",
@@ -491,8 +493,9 @@ const evaluateResponsesStep = createStep({
         {
           questionId: question.id,
           question: question.question,
+          options: question.options,
+          correctAnswerIndex: question.correctAnswerIndex,
           expectedReasoning: question.expectedReasoning,
-          acceptableKeywords: question.acceptableKeywords,
           userAnswer,
           language: behavioralProfile.language as SupportedLanguage,
           childMode: behavioralProfile.childMode,

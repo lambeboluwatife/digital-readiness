@@ -17,8 +17,9 @@ import {
 const inputSchema = z.object({
   questionId: z.string(),
   question: z.string(),
+  options: z.array(z.string()),
+  correctAnswerIndex: z.number(),
   expectedReasoning: z.string(),
-  acceptableKeywords: z.array(z.string()),
   userAnswer: z.string(),
   language: z.enum(["en", "ha", "ig", "yo"]).default("en"),
   childMode: z.boolean().default(false),
@@ -32,57 +33,53 @@ const inputSchema = z.object({
 /**
  * Build the evaluation prompt for the LLM.
  *
- * The LLM is used here rather than simple keyword matching because:
- * 1. Users in low-literacy contexts may express correct reasoning in non-standard ways.
- * 2. Keyword matching cannot capture partial credit nuance.
- * 3. Multi-language answers need semantic evaluation, not string comparison.
+ * For MCQs, the score is determined deterministically in code.
+ * We only use the LLM to generate localized, encouraging feedback
+ * based on the user's specific selection.
  */
 function buildEvaluationPrompt(
   question: string,
+  options: string[],
+  correctAnswerIndex: number,
   expectedReasoning: string,
-  acceptableKeywords: string[],
   userAnswer: string,
+  isCorrect: boolean,
   language: SupportedLanguage,
   childMode: boolean,
   supportMode: boolean,
 ): string {
-  const lenientInstruction =
-    childMode || supportMode
-      ? "Be generous in awarding partial credit. These users may not use precise language but show practical understanding."
-      : "Award full credit only when the answer shows clear, practical reasoning aligned with the expected approach.";
+  const languageName = language === "en" ? "English" : language === "ha" ? "Hausa" : language === "ig" ? "Igbo" : "Yoruba";
 
-  return `You are evaluating a digital literacy assessment response.
+  return `You are providing feedback for a digital literacy assessment.
 
 QUESTION ASKED:
 "${question}"
 
-EXPECTED REASONING (internal reference — do NOT reveal to user):
-"${expectedReasoning}"
+OPTIONS:
+${options.map((opt, i) => `${i}: ${opt}`).join("\n")}
 
-ACCEPTABLE KEYWORDS/CONCEPTS (may appear in any language):
-${acceptableKeywords.map((k) => `- ${k}`).join("\n")}
+CORRECT ANSWER:
+Option ${correctAnswerIndex}: "${options[correctAnswerIndex]}"
 
-USER'S ANSWER:
+USER'S SELECTED ANSWER:
 "${userAnswer}"
 
-SCORING RULES:
-- Score 100: The user's answer shows clear practical reasoning that aligns with the expected approach. They do not need to use exact words.
-- Score 50:  The user shows some relevant understanding or intent but their answer is incomplete, vague, or partially correct.
-- Score 0:   The user's answer shows no relevant reasoning, is blank, or is entirely off-topic.
+EXPECTED REASONING (internal reference):
+"${expectedReasoning}"
 
-${lenientInstruction}
+THE USER IS: ${isCorrect ? "CORRECT" : "INCORRECT"}
+
+Based on the above, write a single encouraging sentence of feedback explaining why their answer is correct or incorrect.
 
 IMPORTANT:
-- The user may have answered in ${language === "en" ? "English" : language === "ha" ? "Hausa" : language === "ig" ? "Igbo" : "Yoruba"} or a mix of languages — evaluate the MEANING, not the language.
-- Do NOT penalise grammatical errors or spelling mistakes.
-- Do NOT penalise brevity — a short but correct answer scores 100.
-- If the user answer is empty or only whitespace, score is 0.
+- The feedback MUST be written in ${languageName}.
+- Keep it to ONE simple sentence.
+- ${childMode || supportMode ? "Use very gentle, supportive language." : "Use clear, practical language."}
 
 RESPOND ONLY with a valid JSON object. No markdown, no explanation.
 Schema:
 {
-  "score": 0 | 50 | 100,
-  "feedback": "<one sentence explaining the score, written in ${language === "en" ? "English" : language === "ha" ? "Hausa" : language === "ig" ? "Igbo" : "Yoruba"}>"
+  "feedback": "<your one-sentence feedback in ${languageName}>"
 }`;
 }
 
@@ -93,17 +90,6 @@ function isEmptyAnswer(answer: string): boolean {
   return answer.trim().length === 0;
 }
 
-/**
- * Validate that the score value is one of the allowed discrete values.
- */
-function assertValidScore(value: unknown): asserts value is QuestionScore {
-  if (value !== 0 && value !== 50 && value !== 100) {
-    throw new Error(
-      `evaluateResponse: Invalid score value "${value}". Expected 0, 50, or 100.`,
-    );
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool definition
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,17 +97,18 @@ function assertValidScore(value: unknown): asserts value is QuestionScore {
 export const evaluateResponseTool = createTool({
   id: "evaluateResponse",
   description:
-    "Evaluates a single user answer against a situational question using LLM-based semantic reasoning. " +
-    "Returns a typed EvaluatedResponse with a score of 0 (no credit), 50 (partial), or 100 (full credit). " +
-    "Handles multi-language answers, empty answers, and applies lenient scoring in child/support mode.",
+    "Evaluates a single user MCQ answer against a situational question. " +
+    "Calculates the score deterministically (100 or 0) and uses LLM to generate localized feedback. " +
+    "Returns a typed EvaluatedResponse.",
   inputSchema,
   execute: async (rawInput: any) => {
     const input = rawInput?.context ?? rawInput;
     const {
       questionId,
       question,
+      options,
+      correctAnswerIndex,
       expectedReasoning,
-      acceptableKeywords,
       userAnswer,
       language,
       childMode,
@@ -140,11 +127,20 @@ export const evaluateResponseTool = createTool({
       return result;
     }
 
+    // ── Deterministic Scoring ───────────────────────────────────────────────
+    const isCorrect = 
+      userAnswer === String(correctAnswerIndex) || 
+      userAnswer.trim().toLowerCase() === options[correctAnswerIndex].trim().toLowerCase();
+    
+    const scoreValue: QuestionScore = isCorrect ? 100 : 0;
+
     const prompt = buildEvaluationPrompt(
       question,
+      options,
+      correctAnswerIndex,
       expectedReasoning,
-      acceptableKeywords,
       userAnswer,
+      isCorrect,
       language as SupportedLanguage,
       childMode,
       supportMode,
@@ -158,7 +154,7 @@ export const evaluateResponseTool = createTool({
     });
 
     // ── Parse response ──────────────────────────────────────────────────────
-    let parsed: { score: unknown; feedback: string };
+    let parsed: { feedback: string };
     try {
       const cleaned = rawText
         .replace(/^```(?:json)?\s*/i, "")
@@ -170,11 +166,6 @@ export const evaluateResponseTool = createTool({
         `evaluateResponse: LLM returned non-JSON output.\nRaw: ${rawText.slice(0, 200)}`,
       );
     }
-
-    // ── Validate score ──────────────────────────────────────────────────────
-    // Coerce to number first in case LLM returns a string like "100"
-    const scoreValue = Number(parsed.score);
-    assertValidScore(scoreValue);
 
     const result: EvaluatedResponse = {
       questionId,
