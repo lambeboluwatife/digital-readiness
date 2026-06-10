@@ -111,7 +111,7 @@ export const digitalReadinessAgent = new Agent({
   workflows: {
     digitalReadinessWorkflow: digitalReadinessWorkflow,
   },
-  model: "google/gemini-2.5-flash",
+  model: "openai/gpt-4o-mini",
   memory: new Memory(),
   defaultOptions: {
     autoResumeSuspendedTools: true,

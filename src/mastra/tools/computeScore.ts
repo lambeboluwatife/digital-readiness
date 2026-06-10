@@ -1,11 +1,11 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { generateText } from "ai";
-import {google} from "@ai-sdk/google"
-// import { openai } from "@ai-sdk/openai";
+// import { google } from "@ai-sdk/google";
+import { openai } from "@ai-sdk/openai";
 
-// const model = openai("gpt-5-mini");
-const model = google("gemini-2.5-flash")
+const model = openai("gpt-4o-mini");
+// const model = google("gemini-2.5-flash");
 import {
   type ReadinessResult,
   type ReadinessLevel,

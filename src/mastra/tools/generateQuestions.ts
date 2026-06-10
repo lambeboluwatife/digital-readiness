@@ -1,11 +1,11 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { generateText } from "ai";
-import {google} from "@ai-sdk/google"
-// import { openai } from "@ai-sdk/openai";
+// import { google } from "@ai-sdk/google";
+import { openai } from "@ai-sdk/openai";
 
-// const model = openai("gpt-5-mini");
-const model = google("gemini-2.5-flash")
+const model = openai("gpt-4o-mini");
+// const model = google("gemini-2.5-flash");
 import {
   type SituationalQuestion,
   type QuestionDomain,
@@ -92,7 +92,7 @@ function buildGenerationPrompt(
     ? "\nSUPPORT MODE IS ACTIVE: The user shows very limited digital capability. Keep questions as simple and encouraging as possible."
     : "";
 
-    return `You are generating situational digital literacy questions for a rural user assessment.
+  return `You are generating situational digital literacy questions for a rural user assessment.
 
 CONTEXT:
 - User's behavioral score: ${profile.behavioralScore}/100

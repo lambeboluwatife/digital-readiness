@@ -1,11 +1,11 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { generateText } from "ai";
-import {google} from "@ai-sdk/google"
-// import { openai } from "@ai-sdk/openai";
+// import { google } from "@ai-sdk/google";
+import { openai } from "@ai-sdk/openai";
 
-// const model = openai("gpt-5-mini");
-const model = google("gemini-2.5-flash")
+const model = openai("gpt-4o-mini");
+// const model = google("gemini-2.5-flash");)
 import {
   type EvaluatedResponse,
   type QuestionScore,
@@ -50,7 +50,14 @@ function buildEvaluationPrompt(
   childMode: boolean,
   supportMode: boolean,
 ): string {
-  const languageName = language === "en" ? "English" : language === "ha" ? "Hausa" : language === "ig" ? "Igbo" : "Yoruba";
+  const languageName =
+    language === "en"
+      ? "English"
+      : language === "ha"
+        ? "Hausa"
+        : language === "ig"
+          ? "Igbo"
+          : "Yoruba";
 
   return `You are providing feedback for a digital literacy assessment.
 
@@ -130,10 +137,11 @@ export const evaluateResponseTool = createTool({
     }
 
     // ── Deterministic Scoring ───────────────────────────────────────────────
-    const isCorrect = 
-      userAnswer === String(correctAnswerIndex) || 
-      userAnswer.trim().toLowerCase() === options[correctAnswerIndex].trim().toLowerCase();
-    
+    const isCorrect =
+      userAnswer === String(correctAnswerIndex) ||
+      userAnswer.trim().toLowerCase() ===
+        options[correctAnswerIndex].trim().toLowerCase();
+
     const scoreValue: QuestionScore = isCorrect ? 100 : 0;
 
     const prompt = buildEvaluationPrompt(
